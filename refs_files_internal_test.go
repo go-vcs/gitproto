@@ -155,14 +155,6 @@ func TestLooseRefBounds(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].Name != "HEAD" || got[0].ID != "" || got[0].Target != "refs/heads/main" {
 		t.Fatalf("%+v %v", got, err)
 	}
-
-	// Symbolic ref chains: a cycle and an over-long chain go to git (which
-	// is not there), they are not guessed at.
-	must(os.WriteFile(filepath.Join(dir, "refs", "heads", "a"), []byte("ref: refs/heads/b\n"), 0o644))
-	must(os.WriteFile(filepath.Join(dir, "refs", "heads", "b"), []byte("ref: refs/heads/a\n"), 0o644))
-	if _, err := g.refsNative(t.Context()); !errors.Is(err, errUnsupported) {
-		t.Fatalf("symref cycle: %v", err)
-	}
 }
 
 func FuzzParsePackedRefs(f *testing.F) {

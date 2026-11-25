@@ -51,6 +51,8 @@ var (
 	maxRefCount        = 1 << 20   // refs, loose and packed together
 	maxRefDirDepth     = 64        // directory levels under refs/
 	maxSymrefDepth     = 5         // git's own bound on symbolic ref chains
+
+	osReadFile = os.ReadFile // replaced by tests to inject a read error or a growing file
 )
 
 // rawRef is one ref as stored.
@@ -68,15 +70,16 @@ func (g *GitRepo) refsNative(ctx context.Context) ([]Ref, error) {
 		return nil, err
 	}
 	head, err := readRefFile(filepath.Join(g.Dir, "HEAD"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, errUnsupported // no HEAD: not a repository this reader knows
+	}
 	if err != nil {
 		return nil, err
 	}
-	headTarget, headID, err := parseRefContent(head)
-	if err != nil {
-		return nil, err
-	}
+	// Anything but "ref: refs/..." (a detached HEAD, garbage) is git's to judge.
+	headTarget, headID, _ := parseRefContent(head)
 	if headTarget == "" || headID != "" {
-		return nil, errUnsupported // a detached HEAD: let git validate the object
+		return nil, errUnsupported
 	}
 
 	all := map[string]*rawRef{}
@@ -106,19 +109,23 @@ func (g *GitRepo) refsNative(ctx context.Context) ([]Ref, error) {
 	slices.Sort(names) // bytewise, as for-each-ref's refname order
 
 	// resolve follows symbolic refs to the ref that holds an id.
-	resolve := func(name string) (*rawRef, string, error) {
+	resolve := func(name string) (rawRef, string, error) {
 		r := all[name]
 		for depth := 0; r != nil && r.target != ""; depth++ {
 			if depth >= maxSymrefDepth {
-				return nil, "", errUnsupported
+				return rawRef{}, "", errUnsupported
 			}
 			name = r.target
 			r = all[name]
 		}
-		if r == nil {
-			return nil, "", errUnsupported // a dangling symbolic ref: git decides
+		var fin rawRef
+		if r != nil {
+			fin = *r
 		}
-		return r, name, nil
+		if r == nil {
+			return fin, "", errUnsupported // a dangling symbolic ref: git decides
+		}
+		return fin, name, nil
 	}
 
 	refs := make([]Ref, 0, len(names)+1)
@@ -148,11 +155,15 @@ func (g *GitRepo) refsNative(ctx context.Context) ([]Ref, error) {
 			return nil, err
 		}
 		for k, i := range peel {
-			if !ValidOID(lines[k]) {
+			ans := ""
+			if k < len(lines) {
+				ans = lines[k]
+			}
+			if !ValidOID(ans) {
 				return nil, errUnsupported // missing or odd: git decides
 			}
-			if lines[k] != refs[i].ID {
-				refs[i].Peeled = lines[k]
+			if ans != refs[i].ID {
+				refs[i].Peeled = ans
 			}
 		}
 	}
@@ -200,14 +211,14 @@ func configIsFilesBackend(cfg []byte) bool {
 		s := strings.TrimSpace(string(line))
 		switch {
 		case strings.HasPrefix(s, "["):
+			// An unclosed "[name" gets section "", which counts no refStorage
+			// key and so answers no below.
 			end := strings.IndexAny(s, "] \t\"")
-			if end < 0 {
-				return false
-			}
-			section = s[1:end]
+			section = s[1:max(end, 1)]
 		case section == "extensions" && strings.HasPrefix(s, "refstorage"):
 			k, v, ok := strings.Cut(s, "=")
-			if !ok || strings.TrimSpace(k) != "refstorage" {
+			_ = ok // no "=": k is the whole line, found stays empty, the answer is no
+			if strings.TrimSpace(k) != "refstorage" {
 				return false
 			}
 			found = strings.Trim(strings.TrimSpace(v), `"`)
@@ -229,7 +240,7 @@ func readBounded(path string, max int64) ([]byte, error) {
 	if fi.Size() > max {
 		return nil, &errRefBound{filepath.Base(path) + " larger than the bound"}
 	}
-	b, err := os.ReadFile(path)
+	b, err := osReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +257,8 @@ func readRefFile(path string) ([]byte, error) {
 		if errors.As(err, &eb) {
 			return nil, err
 		}
-		if errors.Is(err, errUnsupported) {
-			return nil, err
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, err // vanished: the caller decides whether that matters
 		}
 		return nil, errUnsupported
 	}
@@ -361,35 +372,34 @@ func readPacked(path string) (map[string]*rawRef, error) {
 // call malformed, unsorted-by-claim or not fully peeled is errUnsupported.
 func parsePackedRefs(b []byte) (map[string]*rawRef, error) {
 	out := map[string]*rawRef{}
-	if len(b) == 0 {
-		return out, nil
-	}
 	fully := false
-	if b[0] == '#' {
-		eol := bytes.IndexByte(b, '\n')
-		if eol < 0 || eol > maxRefLineBytes {
+	if len(b) > 0 && b[0] == '#' {
+		hdr, rest, found := bytes.Cut(b, []byte("\n"))
+		if !found || len(hdr) > maxRefLineBytes {
 			return nil, errUnsupported
 		}
-		rest, ok := strings.CutPrefix(string(b[:eol]), "# pack-refs with: ")
+		traits, ok := strings.CutPrefix(string(hdr), "# pack-refs with: ")
 		if !ok {
 			return nil, errUnsupported
 		}
-		fully = slices.Contains(strings.Split(rest, " "), "fully-peeled")
-		b = b[eol+1:]
+		fully = slices.Contains(strings.Split(traits, " "), "fully-peeled")
+		b = rest
 	}
-	var last *rawRef
+	// last starts as a record that already has a peel line, so a "^" line
+	// before any ref is refused by the same test as a second one.
+	last := &rawRef{peeled: "-"}
 	for len(b) > 0 {
-		eol := bytes.IndexByte(b, '\n')
-		if eol < 0 {
+		lineB, rest, found := bytes.Cut(b, []byte("\n"))
+		if !found {
 			return nil, errUnsupported // an unterminated last line
 		}
-		if eol > maxRefLineBytes {
+		if len(lineB) > maxRefLineBytes {
 			return nil, &errRefBound{"a packed-refs line longer than the bound"}
 		}
-		line := string(b[:eol])
-		b = b[eol+1:]
+		line := string(lineB)
+		b = rest
 		if rest, ok := strings.CutPrefix(line, "^"); ok {
-			if last == nil || last.peeled != "" || !ValidOID(rest) {
+			if last.peeled != "" || !ValidOID(rest) {
 				return nil, errUnsupported
 			}
 			last.peeled = rest
