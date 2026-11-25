@@ -70,8 +70,62 @@ func revKey(spec string) string {
 	return "rev-parse." + b.String()
 }
 
+// refLine is a for-each-ref line whose peeled object, when present, is itself
+// a tag (so Refs must ask cat-file for the full peel).
 func refLine(id, name, peeled, symref string) string {
-	return id + "\x00" + name + "\x00" + peeled + "\x00" + symref + "\n"
+	typ := ""
+	if peeled != "" {
+		typ = "tag"
+	}
+	return refLineType(id, name, peeled, symref, typ)
+}
+
+func refLineType(id, name, peeled, symref, peeledType string) string {
+	return id + "\x00" + name + "\x00" + peeled + "\x00" + symref + "\x00" + peeledType + "\n"
+}
+
+// A tag whose one-level peel is a commit is fully peeled: no cat-file runs
+// (the scripted cat-file would fail the call if it did), and a HEAD that names
+// a listed ref is answered from the listing without rev-parse.
+func TestGitRepoRefsNeedsNoExtraProcessForTheCommonCase(t *testing.T) {
+	r := fakeGit(t, map[string]reply{
+		"for-each-ref": {refLine(idA, "refs/heads/main", "", "") + refLineType(idA, "refs/tags/t", idB, "", "commit"), 0},
+		"cat-file":     {"", 128},
+		"symbolic-ref": {"refs/heads/main\n", 0},
+		revKey("HEAD"): {"", 128},
+	})
+	got, err := r.Refs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []gitproto.Ref{
+		{Name: "HEAD", ID: idA, Target: "refs/heads/main"},
+		{Name: "refs/heads/main", ID: idA},
+		{Name: "refs/tags/t", ID: idA, Peeled: idB},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ref %d: got %+v want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// A HEAD whose target is not in the listing (unborn, or outside refs/) still
+// goes through rev-parse.
+func TestGitRepoRefsHeadOutsideTheListingUsesRevParse(t *testing.T) {
+	r := fakeGit(t, map[string]reply{
+		"for-each-ref":    {refLine(idA, "refs/heads/main", "", ""), 0},
+		"symbolic-ref":    {"refs/heads/other\n", 0},
+		revKey("HEAD"):    {idB + "\n", 0},
+		revKey("HEAD^{}"): {idB + "\n", 0},
+	})
+	got, err := r.Refs(context.Background())
+	if err != nil || len(got) != 2 || got[0].ID != idB || got[0].Target != "refs/heads/other" {
+		t.Fatalf("%+v %v", got, err)
+	}
 }
 
 func TestGitRepoRefsParsesGitOutput(t *testing.T) {
@@ -88,7 +142,7 @@ func TestGitRepoRefsParsesGitOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []gitproto.Ref{
-		{Name: "HEAD", ID: idA, Target: "refs/heads/main", Peeled: idB},
+		{Name: "HEAD", ID: idA, Target: "refs/heads/main"},
 		{Name: "refs/heads/main", ID: idA},
 		{Name: "refs/tags/t", ID: idA, Peeled: idC},
 	}
@@ -131,7 +185,7 @@ func TestGitRepoRefsRefusesWhatGitGetsWrong(t *testing.T) {
 	for name, mod := range map[string]func(map[string]reply){
 		"for-each-ref fails":  func(m map[string]reply) { m["for-each-ref"] = reply{okRefs, 2} },
 		"line with 3 fields":  func(m map[string]reply) { m["for-each-ref"] = reply{idA + "\x00refs/x\x00\n", 0} },
-		"line with 5 fields":  func(m map[string]reply) { m["for-each-ref"] = reply{okRefs[:len(okRefs)-1] + "\x00z\n", 0} },
+		"line with 6 fields":  func(m map[string]reply) { m["for-each-ref"] = reply{okRefs[:len(okRefs)-1] + "\x00z\n", 0} },
 		"invalid object name": func(m map[string]reply) { m["for-each-ref"] = reply{refLine("zz", "refs/x", "", ""), 0} },
 		"peel fails": func(m map[string]reply) {
 			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}

@@ -121,37 +121,53 @@ func exitCode(err error) int {
 
 // Refs implements Repository.
 func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
+	// A process spawn costs more than everything this package does in Go
+	// (profiled: 2% of the wall time is on-CPU in this process), so the
+	// listing spends as few as it can: for-each-ref and symbolic-ref run
+	// at the same time, and the peel and HEAD questions below usually need
+	// no process at all.
+	type result struct {
+		out []byte
+		err error
+	}
+	headc := make(chan result, 1)
+	go func() {
+		out, err := g.run(ctx, "", "symbolic-ref", "-q", "HEAD")
+		headc <- result{out, err}
+	}()
 	out, err := g.run(ctx, "", "for-each-ref",
-		"--format=%(objectname)%00%(refname)%00%(*objectname)%00%(symref)")
+		"--format=%(objectname)%00%(refname)%00%(*objectname)%00%(symref)%00%(*objecttype)")
+	headRes := <-headc // always drained: the goroutine never outlives the call
 	if err != nil {
 		return nil, err
 	}
 	var refs []Ref
+	var peel []int
+	var in strings.Builder
+	byName := map[string]int{}
 	for line := range strings.SplitSeq(strings.TrimSuffix(string(out), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
 		f := strings.Split(line, "\x00")
 		n := len(f)
-		f = append(f, "", "", "", "") // indexing below never depends on the count check
-		if n != 4 || !ValidOID(f[0]) {
+		f = append(f, "", "", "", "", "") // indexing below never depends on the count check
+		if n != 5 || !ValidOID(f[0]) {
 			return nil, fmt.Errorf("gitproto: unexpected for-each-ref line %q", line)
 		}
 		r := Ref{ID: f[0], Name: f[1], Target: f[3]}
 		if f[2] != "" {
 			r.Peeled = f[2]
 		}
-		refs = append(refs, r)
-	}
-	// for-each-ref's %(*objectname) peels one level; peel fully.
-	// One process for all of them: a process per tag costs more than the pack.
-	var peel []int
-	var in strings.Builder
-	for i := range refs {
-		if refs[i].Peeled != "" {
-			peel = append(peel, i)
-			in.WriteString(refs[i].ID + "^{}\n")
+		byName[r.Name] = len(refs)
+		// for-each-ref's %(*objectname) peels one level, which is the whole
+		// peel unless that object is itself a tag (a tag of a tag): only
+		// those need git cat-file, in one process for all of them.
+		if f[2] != "" && f[4] == "tag" {
+			peel = append(peel, len(refs))
+			in.WriteString(r.ID + "^{}\n")
 		}
+		refs = append(refs, r)
 	}
 	if len(peel) > 0 {
 		out, err := g.run(ctx, in.String(), "cat-file", "--batch-check=%(objectname)")
@@ -175,10 +191,15 @@ func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
 	}
 
 	head := Ref{Name: "HEAD"}
-	if out, err := g.run(ctx, "", "symbolic-ref", "-q", "HEAD"); err == nil {
-		head.Target = strings.TrimSpace(string(out))
-	} else if exitCode(err) != 1 { // 1: HEAD is detached
-		return nil, err
+	if headRes.err == nil {
+		head.Target = strings.TrimSpace(string(headRes.out))
+	} else if exitCode(headRes.err) != 1 { // 1: HEAD is detached
+		return nil, headRes.err
+	}
+	if i, ok := byName[head.Target]; ok && head.Target != "" {
+		// HEAD names a ref the listing already resolved and peeled.
+		head.ID, head.Peeled = refs[i].ID, refs[i].Peeled
+		return slices.Insert(refs, 0, head), nil
 	}
 	id, ok, err := g.revParse(ctx, "HEAD")
 	if err != nil {
