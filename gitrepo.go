@@ -125,8 +125,20 @@ func exitCode(err error) int {
 // read directly (refs_files.go); anything that reader does not fully
 // understand, reftable included, is answered by git.
 func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
+	return g.refs(ctx, true)
+}
+
+// RefsUnpeeled is Refs without the peeling that costs a process: a loose ref
+// outside refs/heads/ may lack its Peeled id. Every ID is exact, so it answers
+// "is this object a ref's tip" without spawning git; serveFetch asks it first
+// and falls back to Refs only for a want that is not a tip.
+func (g *GitRepo) RefsUnpeeled(ctx context.Context) ([]Ref, error) {
+	return g.refs(ctx, false)
+}
+
+func (g *GitRepo) refs(ctx context.Context, peel bool) ([]Ref, error) {
 	if !g.NoNativeRefs {
-		refs, err := g.refsNative(ctx)
+		refs, err := g.refsNative(ctx, peel)
 		if err == nil || !errors.Is(err, errUnsupported) {
 			return refs, err
 		}

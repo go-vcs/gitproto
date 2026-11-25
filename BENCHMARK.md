@@ -48,9 +48,33 @@ worktree, an include in the config, a dangling symref). The extra allocations
 per request are the parse of about 170 refs in Go; the `git` column counts only
 the `os/exec` driver.
 
-## Open defect
+## Where the last 4% went (2026-11-25, load < 8, 20 interleaved rounds)
 
-gitproto is still about 4% (6 ms) slower than `git upload-pack`. The
-remainder was not profiled: the Go process is on-CPU for a few percent of the
-wall time, so it is spent in the `pack-objects` child and the request handling
-around it.
+`TestPhases` (phase_test.go, `GITPROTO_BENCH_REPO`) times each step of one
+full clone, rotating the start order. Medians:
+
+| Step                              | median ms | min ms |
+|-----------------------------------|----------:|-------:|
+| `Refs`                            |     13.35 |  12.60 |
+| `WritePack`                       |    140.09 | 136.99 |
+| `ServeRequest`                    |    154.44 | 148.16 |
+| direct `pack-objects`, our args   |    140.27 | 137.91 |
+| `git upload-pack`                 |    146.20 | 143.02 |
+
+`WritePack` equals the direct `pack-objects` run, so the child, the pipe copy
+and the sideband framing cost nothing measurable (the pack bytes are the same
+size; a lean environment without global config changed nothing). `ServeRequest`
+is `Refs` + `WritePack`: the whole gap was `Refs`. The benchmark repository has
+loose refs outside `refs/heads/` (a tag, `refs/remotes/origin/*`), so the
+native reader spawned one `cat-file --batch-check` (about 13 ms) to peel them,
+and validating wants used that full peel. `git upload-pack` itself costs about
+6 ms over its `pack-objects` child.
+
+Fix: want validation asks `RefsUnpeeled` first, and only a want that matches
+no ref object falls back to the peeled `Refs`. The accepted set is unchanged.
+
+The after-fix ns/op table is not yet taken: `gotest` refused to measure
+(5-minute load average 9.2 to 12.4, above the limit of 8) on three attempts
+between 20:32 and 20:48. The expected `ServeRequest` is `WritePack` plus the
+unpeeled `Refs`, about 141 ms against upload-pack's 146 ms; this is a
+prediction from the table above, not a measurement.

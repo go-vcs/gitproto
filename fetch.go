@@ -98,25 +98,13 @@ func serveFetch(ctx context.Context, w *pktline.Writer, repo Repository, args []
 		// Nothing was asked for: an empty response.
 		return w.Flush()
 	}
-	refs, err := repo.Refs(ctx)
-	if err != nil {
-		return err
-	}
 	// A want must be an advertised tip (or the peeled object of one): the
 	// server never serves an object only because the client can name it.
-	tips := make(map[string]bool, 2*len(refs))
-	for _, r := range refs {
-		if r.ID != "" {
-			tips[r.ID] = true
-		}
-		if r.Peeled != "" {
-			tips[r.Peeled] = true
-		}
-	}
-	for _, want := range a.Wants {
-		if !tips[want] {
-			return protoErr("not our ref %s", want)
-		}
+	// Usually every want is a ref's own object, which needs no peeling (and
+	// peeling can cost a process), so that is checked first when the
+	// repository can list refs without it.
+	if err := checkWants(ctx, repo, a.Wants); err != nil {
+		return err
 	}
 
 	common, err := repo.CommonCommits(ctx, a.Haves)
@@ -158,6 +146,48 @@ func serveFetch(ctx context.Context, w *pktline.Writer, repo Repository, args []
 		return err
 	}
 	return w.Flush()
+}
+
+// notTip returns the first want that is neither a ref's object nor, when
+// peeled is set, a ref's peeled object; "" when every want is a tip.
+func notTip(wants []string, refs []Ref, peeled bool) string {
+	tips := make(map[string]bool, 2*len(refs))
+	for _, r := range refs {
+		if r.ID != "" {
+			tips[r.ID] = true
+		}
+		if peeled && r.Peeled != "" {
+			tips[r.Peeled] = true
+		}
+	}
+	for _, w := range wants {
+		if !tips[w] {
+			return w
+		}
+	}
+	return ""
+}
+
+func checkWants(ctx context.Context, repo Repository, wants []string) error {
+	if quick, ok := repo.(interface {
+		RefsUnpeeled(context.Context) ([]Ref, error)
+	}); ok {
+		refs, err := quick.RefsUnpeeled(ctx)
+		if err != nil {
+			return err
+		}
+		if notTip(wants, refs, false) == "" {
+			return nil
+		}
+	}
+	refs, err := repo.Refs(ctx)
+	if err != nil {
+		return err
+	}
+	if w := notTip(wants, refs, true); w != "" {
+		return protoErr("not our ref %s", w)
+	}
+	return nil
 }
 
 // sidebandWriter frames pack bytes on side-band channel 1.

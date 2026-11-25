@@ -3,9 +3,7 @@ package gitproto_test
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,33 +21,12 @@ type reply struct {
 	rc  int
 }
 
-const fakeGitScript = `#!/bin/sh
-d=$(dirname "$0")
-k=$1
-if [ "$1" = rev-parse ]; then
-  for a; do last=$a; done
-  k=rev-parse.$(printf %s "$last" | tr -c 'A-Za-z0-9' _)
-fi
-cat >/dev/null
-[ -f "$d/$k.out" ] && cat "$d/$k.out"
-rc=0
-[ -f "$d/$k.rc" ] && rc=$(cat "$d/$k.rc")
-exit "$rc"
-`
-
 // fakeGit returns a GitRepo whose git answers per replies; a key without a
 // reply prints nothing and exits 0.
 func fakeGit(t *testing.T, replies map[string]reply) *gitproto.GitRepo {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the scripted git is a POSIX shell script")
-	}
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "git")
-	write(t, bin, fakeGitScript)
-	if err := os.Chmod(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := buildFakeGit(t)
+	dir := filepath.Dir(bin)
 	for k, r := range replies {
 		write(t, filepath.Join(dir, k+".out"), r.out)
 		write(t, filepath.Join(dir, k+".rc"), strconv.Itoa(r.rc))

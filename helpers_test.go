@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,6 +31,23 @@ func git(t testing.TB, dir string, args ...string) string {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, errb.String())
 	}
 	return strings.TrimSpace(out.String())
+}
+
+// buildFakeGit compiles testdata/fakegit (a scripted stand-in for git that
+// needs no POSIX shell, so the tests run on every platform) into a fresh
+// directory and returns the executable's path. Its answers are the files
+// "<key>.out" and "<key>.rc" next to it.
+func buildFakeGit(t testing.TB) string {
+	t.Helper()
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name = "git.exe"
+	}
+	bin := filepath.Join(t.TempDir(), name)
+	if out, err := exec.Command("go", "build", "-o", bin, "./testdata/fakegit").CombinedOutput(); err != nil {
+		t.Fatalf("build fakegit: %v\n%s", err, out)
+	}
+	return bin
 }
 
 func write(t testing.TB, path, content string) {
