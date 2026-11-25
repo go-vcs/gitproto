@@ -93,6 +93,23 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 func (b *boundedBuffer) String() string { return b.buf.String() }
 
+// cancelWriter forwards to w; when w fails, the consumer is gone: it records
+// the error and cancels the context so git is killed instead of awaited.
+type cancelWriter struct {
+	w      io.Writer
+	cancel context.CancelFunc
+	err    error
+}
+
+func (c *cancelWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	if err != nil {
+		c.err = err
+		c.cancel()
+	}
+	return n, err
+}
+
 // exitCode returns the exit status of a failed git command, or -1.
 func exitCode(err error) int {
 	var ee *exec.ExitError
@@ -233,25 +250,20 @@ func (g *GitRepo) WritePack(ctx context.Context, req PackRequest, w io.Writer) e
 		}
 		in.WriteString("^" + id + "\n")
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	c := g.cmd(ctx, args...)
 	c.Stdin = strings.NewReader(in.String())
 	errb := &boundedBuffer{max: 4096}
 	c.Stderr = errb
-	stdout, err := c.StdoutPipe()
-	if err != nil {
-		return err
-	}
+	cw := &cancelWriter{w: w, cancel: cancel}
+	c.Stdout = cw
 	if err := c.Start(); err != nil {
 		return err
 	}
-	_, copyErr := io.CopyBuffer(w, stdout, make([]byte, 64<<10))
-	if copyErr != nil {
-		// The consumer is gone: stop git, do not wait for it to finish.
-		_ = c.Cancel()
-	}
 	waitErr := c.Wait()
-	if copyErr != nil {
-		return copyErr
+	if cw.err != nil {
+		return cw.err
 	}
 	if waitErr != nil {
 		return &gitError{args: args, err: waitErr, stderr: errb.String()}

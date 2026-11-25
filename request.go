@@ -171,7 +171,7 @@ func ParseRequest(r *pktline.Reader, lim Limits) (*Request, error) {
 	// capability-list, up to delim-pkt (arguments follow) or flush-pkt.
 	inArgs := false
 	sawObjectFormat := false
-	for {
+	for range lim.MaxRequestLines + 1 { // next() refuses before this ends
 		p, err := next()
 		if err == io.EOF {
 			// The request began; ending between packets is a truncation.
@@ -218,6 +218,7 @@ func ParseRequest(r *pktline.Reader, lim Limits) (*Request, error) {
 			sawObjectFormat = true
 		}
 	}
+	return nil, protoErr("request exceeds %d lines", lim.MaxRequestLines)
 }
 
 func validKey(s string) bool {

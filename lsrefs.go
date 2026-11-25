@@ -84,9 +84,7 @@ func serveLsRefs(ctx context.Context, w *pktline.Writer, repo Repository, args [
 				line.WriteString(" peeled:" + r.Peeled)
 			}
 		}
-		if err := w.Text(line.String()); err != nil {
-			return err
-		}
+		_ = w.Text(line.String()) // sticky error, returned by Flush
 	}
 	return w.Flush()
 }

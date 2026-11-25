@@ -151,7 +151,20 @@ func Text(p []byte) []byte {
 
 // Writer encodes pkt-lines.
 type Writer struct {
-	w io.Writer
+	w   io.Writer
+	err error // sticky: the first write error
+}
+
+// Err returns the first write error, if any. Once set, every later write
+// returns it without touching the underlying writer.
+func (w *Writer) Err() error { return w.err }
+
+func (w *Writer) put(b []byte) error {
+	if w.err != nil {
+		return w.err
+	}
+	_, w.err = w.w.Write(b)
+	return w.err
 }
 
 // NewWriter returns a Writer.
@@ -172,8 +185,7 @@ func (w *Writer) Data(p []byte) error {
 	b := make([]byte, 0, 4+len(p))
 	b = append(b, header(len(p)+4)...)
 	b = append(b, p...)
-	_, err := w.w.Write(b)
-	return err
+	return w.put(b)
 }
 
 // Text writes s followed by LF as one data pkt-line.
@@ -196,7 +208,7 @@ func (w *Writer) Sideband(ch byte, p []byte) error {
 		b = append(b, header(n+5)...)
 		b = append(b, ch)
 		b = append(b, p[:n]...)
-		if _, err := w.w.Write(b); err != nil {
+		if err := w.put(b); err != nil {
 			return err
 		}
 		p = p[n:]
@@ -214,6 +226,5 @@ func (w *Writer) Delim() error { return w.special("0001") }
 func (w *Writer) ResponseEnd() error { return w.special("0002") }
 
 func (w *Writer) special(s string) error {
-	_, err := io.WriteString(w.w, s)
-	return err
+	return w.put([]byte(s))
 }

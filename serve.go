@@ -49,9 +49,7 @@ func (s *Server) Advertise(w io.Writer) error {
 		"fetch",
 		"object-format=sha1",
 	} {
-		if err := pw.Text(l); err != nil {
-			return err
-		}
+		_ = pw.Text(l) // sticky error, returned by Flush
 	}
 	return pw.Flush()
 }
@@ -65,9 +63,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		return err
 	}
 	bw := bufio.NewWriterSize(w, 64<<10)
-	if err := s.Advertise(bw); err != nil {
-		return err
-	}
+	_ = s.Advertise(bw) // a bufio.Writer's error is sticky: bw.Flush returns it
 	if err := bw.Flush(); err != nil {
 		return err
 	}

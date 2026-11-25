@@ -271,6 +271,8 @@ func TestRefusals(t *testing.T) {
 		"object-format twice":  {request("ls-refs", []string{"object-format=sha1", "object-format=sha1"}), "duplicate object-format"},
 		"bad capability name":  {request("ls-refs", []string{"a b=c"}), "invalid capability"},
 		"bad command name":     {[]byte("0010command=a b\n0000"), "invalid command name"},
+		"empty command name":   {[]byte("000dcommand=\n0000"), "invalid command name"},
+		"empty capability":     {[]byte("0014command=ls-refs\n0007=x\n0000"), "invalid capability"},
 		"no command=":          {[]byte("0008ls-r\n0000"), "does not start with command="},
 		"delim first":          {[]byte("0001"), "unexpected delim packet"},
 		"response-end first":   {[]byte("0002"), "unexpected response-end packet at start"},
@@ -309,6 +311,40 @@ func TestRefusals(t *testing.T) {
 			resp, err := serveOne(t, newServer(f.repo()), tc.req)
 			assertRefused(t, resp, err, tc.want)
 		})
+	}
+}
+
+// A refusal echoes at most 64 bytes of what the client sent.
+func TestRefusalClipsEchoedInput(t *testing.T) {
+	for n, wantClip := range map[int]bool{63: false, 64: false, 65: true, 1000: true} {
+		resp, err := serveOne(t, newServer(nil), request("ls-refs", []string{"object-format=" + strings.Repeat("x", n)}))
+		assertRefused(t, resp, err, "unsupported object-format")
+		var pe *gitproto.ProtocolError
+		errors.As(err, &pe)
+		if got := strings.Contains(pe.Msg, "..."); got != wantClip {
+			t.Errorf("%d bytes: clipped=%v, want %v: %q", n, got, wantClip, pe.Msg)
+		}
+		if len(pe.Msg) > 200 {
+			t.Errorf("%d bytes: refusal is %d bytes long", n, len(pe.Msg))
+		}
+	}
+}
+
+// A write failure during the acknowledgments must stop the exchange before
+// the repository is asked to generate a pack nobody can receive.
+func TestNoPackIsGeneratedForADeadClient(t *testing.T) {
+	var common []string
+	for range 3000 {
+		common = append(common, idB)
+	}
+	repo := &fakeRepo{refs: []gitproto.Ref{{Name: "HEAD", ID: idA}}, common: common, pack: []byte("P")}
+	err := newServer(repo).ServeRequest(context.Background(),
+		bytes.NewReader(fetchReq("want "+idA, "have "+idB)), &failWriter{n: 0})
+	if !errors.Is(err, errWrite) {
+		t.Fatalf("got %v", err)
+	}
+	if len(repo.got.Wants) != 0 {
+		t.Fatal("WritePack was called after the acknowledgments failed")
 	}
 }
 
@@ -376,10 +412,14 @@ func TestSession(t *testing.T) {
 	if !strings.Contains(out.String(), "packfile\n") {
 		t.Fatal("no packfile")
 	}
-	// A clean EOF between requests ends the session without error.
+	// A clean EOF between requests ends the session without error, and
+	// without an ERR line.
 	out.Reset()
 	if err := newServer(f.repo()).Serve(context.Background(), bytes.NewReader(request("ls-refs", nil)), &out); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "ERR") {
+		t.Fatalf("clean end of session sent an error: %q", out.String())
 	}
 	// A refused request ends the session with the refusal.
 	out.Reset()

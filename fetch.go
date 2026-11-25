@@ -125,30 +125,23 @@ func serveFetch(ctx context.Context, w *pktline.Writer, repo Repository, args []
 	}
 
 	if !a.Done {
-		if err := w.Text("acknowledgments"); err != nil {
-			return err
-		}
+		// Write errors are sticky on w: they surface at the Flush below or
+		// at the Err check before the pack is generated.
+		_ = w.Text("acknowledgments")
 		if len(common) == 0 {
-			if err := w.Text("NAK"); err != nil {
-				return err
-			}
+			_ = w.Text("NAK")
 			return w.Flush()
 		}
 		for _, id := range common {
-			if err := w.Text("ACK " + id); err != nil {
-				return err
-			}
+			_ = w.Text("ACK " + id)
 		}
-		if err := w.Text("ready"); err != nil {
-			return err
-		}
-		if err := w.Delim(); err != nil {
-			return err
-		}
+		_ = w.Text("ready")
+		_ = w.Delim()
 	}
 
-	if err := w.Text("packfile"); err != nil {
-		return err
+	_ = w.Text("packfile")
+	if err := w.Err(); err != nil {
+		return err // never generate a pack nobody can receive
 	}
 	sb := &sidebandWriter{w: w}
 	err = repo.WritePack(ctx, PackRequest{
