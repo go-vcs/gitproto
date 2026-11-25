@@ -132,7 +132,9 @@ func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
 			continue
 		}
 		f := strings.Split(line, "\x00")
-		if len(f) != 4 || !ValidOID(f[0]) {
+		n := len(f)
+		f = append(f, "", "", "", "") // indexing below never depends on the count check
+		if n != 4 || !ValidOID(f[0]) {
 			return nil, fmt.Errorf("gitproto: unexpected for-each-ref line %q", line)
 		}
 		r := Ref{ID: f[0], Name: f[1], Target: f[3]}

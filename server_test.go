@@ -348,6 +348,27 @@ func TestNoPackIsGeneratedForADeadClient(t *testing.T) {
 	}
 }
 
+// repoWriteProbe writes a large pack and keeps the error of its first Write.
+type repoWriteProbe struct {
+	fakeRepo
+	firstErr error
+}
+
+func (r *repoWriteProbe) WritePack(_ context.Context, _ gitproto.PackRequest, w io.Writer) error {
+	_, r.firstErr = w.Write(bytes.Repeat([]byte("x"), 200_000))
+	return nil
+}
+
+// The pack writer must report a dead client to the repository at once, so
+// that it can stop generating, instead of discovering it at the final flush.
+func TestPackWriterReportsADeadClientToTheRepository(t *testing.T) {
+	repo := &repoWriteProbe{fakeRepo: fakeRepo{refs: []gitproto.Ref{{Name: "HEAD", ID: idA}}}}
+	_ = newServer(repo).ServeRequest(context.Background(), bytes.NewReader(fetchReq("want "+idA, "done")), &failWriter{n: 0})
+	if !errors.Is(repo.firstErr, errWrite) {
+		t.Fatalf("repository saw %v", repo.firstErr)
+	}
+}
+
 func TestLimits(t *testing.T) {
 	f := newFixture(t)
 	mk := func(l gitproto.Limits) *gitproto.Server {
