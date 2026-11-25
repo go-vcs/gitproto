@@ -65,7 +65,7 @@ type rawRef struct {
 
 // refsNative lists the refs of a "files" repository without a process, or
 // returns errUnsupported when the repository is not one this reader handles.
-func (g *GitRepo) refsNative(ctx context.Context) ([]Ref, error) {
+func (g *GitRepo) refsNative(ctx context.Context, wantPeel bool) ([]Ref, error) {
 	if err := g.checkFilesBackend(); err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (g *GitRepo) refsNative(ctx context.Context) ([]Ref, error) {
 		}
 		refs = append(refs, ref)
 	}
-	if len(peel) > 0 {
+	if wantPeel && len(peel) > 0 {
 		lines, err := g.catFileLines(ctx, in.String(), len(peel))
 		if err != nil {
 			return nil, err

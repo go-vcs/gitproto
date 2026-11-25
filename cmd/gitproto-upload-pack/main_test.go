@@ -178,13 +178,17 @@ func TestMainExitsNonZeroOnRefusal(t *testing.T) {
 // TestGitCloneAndFetchThroughTheBinary drives the real git client: protocol
 // v2, --upload-pack pointing at the built binary, over file://.
 func TestGitCloneAndFetchThroughTheBinary(t *testing.T) {
+	name := "gitproto-upload-pack"
 	if runtime.GOOS == "windows" {
-		t.Skip("--upload-pack goes through sh with a quoted path; exercised on unix")
+		name += ".exe"
 	}
-	bin := filepath.Join(t.TempDir(), "gitproto-upload-pack")
+	bin := filepath.Join(t.TempDir(), name)
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
+	// git runs --upload-pack through its own sh, which would eat the
+	// backslashes of a Windows path: hand it forward slashes.
+	bin = filepath.ToSlash(bin)
 	bare := makeRepo(t)
 	root := t.TempDir()
 	url := "file://" + filepath.ToSlash(bare)

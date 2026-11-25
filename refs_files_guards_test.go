@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -46,7 +47,7 @@ func native(t *testing.T, g *GitRepo) ([]Ref, error) {
 	}
 	c := make(chan res, 1)
 	go func() {
-		r, err := g.refsNative(context.Background())
+		r, err := g.refsNative(context.Background(), true)
 		c <- res{r, err}
 	}()
 	select {
@@ -284,13 +285,20 @@ func TestLooseFileVanishedIsSkipped(t *testing.T) {
 // body and exits with code.
 func fakeGit(t *testing.T, body string, code string) string {
 	t.Helper()
+	name := "git"
 	if runtime.GOOS == "windows" {
-		t.Skip("shell script stand-in for git")
+		name = "git.exe"
 	}
-	p := filepath.Join(t.TempDir(), "git")
-	script := "#!/bin/sh\ncat >/dev/null\nprintf '" + body + "'\nexit " + code + "\n"
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	p := filepath.Join(t.TempDir(), name)
+	if out, err := exec.Command("go", "build", "-o", p, "./testdata/fakegit").CombinedOutput(); err != nil {
+		t.Fatalf("build fakegit: %v\n%s", err, out)
+	}
+	// body spells newlines as \n; the stand-in answers by key (cat-file).
+	answers := map[string]string{"cat-file.out": strings.ReplaceAll(body, `\n`, "\n"), "cat-file.rc": code}
+	for k, v := range answers {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(p), k), []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return p
 }
