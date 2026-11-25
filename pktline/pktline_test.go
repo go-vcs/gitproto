@@ -90,6 +90,35 @@ func TestWriterRefusals(t *testing.T) {
 	}
 }
 
+type countingFail struct{ calls int }
+
+func (c *countingFail) Write([]byte) (int, error) { c.calls++; return 0, io.ErrClosedPipe }
+
+// After the first failed write the Writer is dead: later writes return the
+// same error and never reach the underlying writer.
+func TestWriterErrorIsSticky(t *testing.T) {
+	c := &countingFail{}
+	w := NewWriter(c)
+	if err := w.Text("a"); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := w.Flush(); !errors.Is(err, io.ErrClosedPipe) || c.calls != 1 {
+		t.Fatalf("second write: %v after %d calls", err, c.calls)
+	}
+	if !errors.Is(w.Err(), io.ErrClosedPipe) {
+		t.Fatalf("Err() = %v", w.Err())
+	}
+	if NewWriter(io.Discard).Err() != nil {
+		t.Fatal("fresh Writer has an error")
+	}
+}
+
+func TestTextBoundary(t *testing.T) {
+	if err := NewWriter(io.Discard).Text(strings.Repeat("x", MaxData-1)); err != nil {
+		t.Fatalf("largest text line refused: %v", err)
+	}
+}
+
 func TestSidebandSplits(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
@@ -168,7 +197,10 @@ func FuzzReader(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in []byte) {
 		r := NewReader(bytes.NewReader(in))
 		var total int64
-		for {
+		for i := 0; ; i++ {
+			if i > len(in) {
+				t.Fatal("the reader never reached the end of its input")
+			}
 			p, err := r.Read()
 			if err != nil {
 				break
@@ -188,7 +220,10 @@ func FuzzReader(f *testing.F) {
 		r = NewReader(bytes.NewReader(in))
 		var out bytes.Buffer
 		w := NewWriter(&out)
-		for {
+		for i := 0; ; i++ {
+			if i > len(in) {
+				t.Fatal("the reader never reached the end of its input")
+			}
 			p, err := r.Read()
 			if err != nil {
 				break

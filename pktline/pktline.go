@@ -106,7 +106,9 @@ func (r *Reader) Read() (Packet, error) {
 	case n == 2:
 		return Packet{Kind: ResponseEnd}, nil
 	}
-	size := n - 4
+	// parseLen guarantees 4 <= n <= MaxPacket; clamping keeps the slice in
+	// range whatever happens to that guarantee.
+	size := min(max(n-4, 0), len(r.buf))
 	if _, err := io.ReadFull(r.r, r.buf[:size]); err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
@@ -190,9 +192,6 @@ func (w *Writer) Data(p []byte) error {
 
 // Text writes s followed by LF as one data pkt-line.
 func (w *Writer) Text(s string) error {
-	if len(s)+1 > MaxData {
-		return fmt.Errorf("%w: %d", ErrDataTooBig, len(s)+1)
-	}
 	return w.Data([]byte(s + "\n"))
 }
 
