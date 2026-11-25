@@ -109,8 +109,12 @@ func FuzzServe(f *testing.F) {
 		s := &gitproto.Server{Repo: repo, Limits: gitproto.Limits{MaxRequestBytes: 1 << 16, MaxRequestLines: 1000, MaxWants: 16, MaxHaves: 16}}
 		var out bytes.Buffer
 		_ = s.Serve(context.Background(), bytes.NewReader(in), &out)
+		outLen := out.Len()
 		r := pktline.NewReader(&out)
-		for {
+		for i := 0; ; i++ {
+			if i > outLen {
+				t.Fatal("the reader never reached the end of the output")
+			}
 			if _, err := r.Read(); err != nil {
 				if err != io.EOF {
 					t.Fatalf("server wrote a malformed pkt-line: %v", err)

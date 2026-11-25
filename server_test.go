@@ -240,7 +240,7 @@ func assertRefused(t testing.TB, resp []byte, err error, contains string) {
 	}
 	r := pktline.NewReader(bytes.NewReader(resp))
 	var last string
-	for {
+	for i := 0; i <= len(resp); i++ {
 		p, err := r.Read()
 		if err != nil {
 			break
