@@ -173,6 +173,10 @@ func ParseRequest(r *pktline.Reader, lim Limits) (*Request, error) {
 	sawObjectFormat := false
 	for {
 		p, err := next()
+		if err == io.EOF {
+			// The request began; ending between packets is a truncation.
+			err = io.ErrUnexpectedEOF
+		}
 		if err != nil {
 			return fail(err)
 		}

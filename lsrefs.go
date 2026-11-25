@@ -68,14 +68,13 @@ func serveLsRefs(ctx context.Context, w *pktline.Writer, repo Repository, args [
 		}
 		var line strings.Builder
 		if r.ID == "" {
-			// Unborn HEAD: only sent when the client asked for it.
-			if !a.Unborn || r.Name != "HEAD" {
+			// Unborn HEAD: sent only when the client asked for both
+			// "unborn" and "symrefs", as git upload-pack does (the line
+			// is useless without the target).
+			if !a.Unborn || !a.Symrefs || r.Name != "HEAD" || r.Target == "" {
 				continue
 			}
-			line.WriteString("unborn HEAD")
-			if a.Symrefs && r.Target != "" {
-				line.WriteString(" symref-target:" + r.Target)
-			}
+			line.WriteString("unborn HEAD symref-target:" + r.Target)
 		} else {
 			line.WriteString(r.ID + " " + r.Name)
 			if a.Symrefs && r.Target != "" {

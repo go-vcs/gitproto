@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("0012command=fetch\n00010032want bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n0009done\n0000")

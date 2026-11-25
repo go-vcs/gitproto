@@ -1,0 +1,2 @@
+go test fuzz v1
+string("ref-prefix a\nref-prefix b\nref-prefix c\nref-prefix d\nref-prefix e")
