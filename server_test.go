@@ -50,6 +50,14 @@ func TestLsRefsMatchesGit(t *testing.T) {
 	withSym := filepath.Join(t.TempDir(), "sym.git")
 	git(t, filepath.Dir(withSym), "clone", "-q", "--bare", f.Work, withSym)
 	git(t, withSym, "symbolic-ref", "refs/heads/alias", "refs/heads/topic")
+	override := filepath.Join(t.TempDir(), "override.git")
+	git(t, filepath.Dir(override), "clone", "-q", "--bare", f.Work, override)
+	git(t, override, "update-ref", "refs/heads/topic", f.Main) // loose refs overriding packed ones
+	git(t, override, "update-ref", "refs/tags/light", f.Topic)
+	git(t, override, "tag", "-f", "-a", "-m", "again", "v1", f.Topic)
+	dangling := filepath.Join(t.TempDir(), "dangling.git")
+	git(t, filepath.Dir(dangling), "clone", "-q", "--bare", f.Work, dangling)
+	git(t, dangling, "symbolic-ref", "refs/heads/dangler", "refs/heads/nowhere")
 
 	argsets := [][]string{
 		nil,
@@ -63,7 +71,7 @@ func TestLsRefsMatchesGit(t *testing.T) {
 		{"peel", "ref-prefix refs/heads/m"},
 		{"symrefs", "ref-prefix refs/nothing/"},
 	}
-	for name, dir := range map[string]string{"normal": f.Bare, "empty": empty, "detached": detached, "head-at-tag": atTag, "symref-ref": withSym} {
+	for name, dir := range map[string]string{"normal": f.Bare, "empty": empty, "detached": detached, "head-at-tag": atTag, "symref-ref": withSym, "loose-overrides-packed": override, "dangling-symref": dangling} {
 		for _, args := range argsets {
 			req := request("ls-refs", []string{"agent=git/2.47", "object-format=sha1"}, args...)
 			got, err := serveOne(t, newServer(&gitproto.GitRepo{Dir: dir}), req)

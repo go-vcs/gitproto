@@ -28,6 +28,8 @@ type GitRepo struct {
 	// PackThreads is passed to git pack-objects as --threads. Zero leaves
 	// git's default (all cores).
 	PackThreads int
+	// NoNativeRefs makes Refs always ask git, never read the ref files.
+	NoNativeRefs bool
 }
 
 func (g *GitRepo) cmd(ctx context.Context, args ...string) *exec.Cmd {
@@ -119,8 +121,21 @@ func exitCode(err error) int {
 	return -1
 }
 
-// Refs implements Repository.
+// Refs implements Repository. A repository using the files ref backend is
+// read directly (refs_files.go); anything that reader does not fully
+// understand, reftable included, is answered by git.
 func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
+	if !g.NoNativeRefs {
+		refs, err := g.refsNative(ctx)
+		if err == nil || !errors.Is(err, errUnsupported) {
+			return refs, err
+		}
+	}
+	return g.refsViaGit(ctx)
+}
+
+// refsViaGit lists refs with git for-each-ref and friends.
+func (g *GitRepo) refsViaGit(ctx context.Context) ([]Ref, error) {
 	// A process spawn costs more than everything this package does in Go
 	// (profiled: 2% of the wall time is on-CPU in this process), so the
 	// listing spends as few as it can: for-each-ref and symbolic-ref run

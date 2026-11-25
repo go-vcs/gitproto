@@ -39,9 +39,10 @@ It requires `GIT_PROTOCOL=version=2` and refuses protocol 0 and 1.
 ## Object storage: delegated to `git`, behind one interface
 
 `Repository` is the narrow seam (`Refs`, `CommonCommits`, `WritePack`).
-Milestone 1 implements it with the `git` binary (`GitRepo`): `for-each-ref`,
-`symbolic-ref`, `rev-parse`, `cat-file --batch-check`, and
-`pack-objects --revs --stdout`. Every command line is fixed in
+Milestone 1 implements it with the `git` binary (`GitRepo`): refs are read
+directly from a "files" repository and through `for-each-ref`,
+`symbolic-ref`, `rev-parse`, `cat-file --batch-check` otherwise (see the
+bibliography); packs come from `pack-objects --revs --stdout`. Every command line is fixed in
 `gitrepo.go`; no wire input reaches argv (object ids are validated as 40
 lowercase hex digits and written to stdin), no shell is involved, and git runs
 with a minimal environment (`GIT_DIR`, no user or system config, no replace
@@ -84,8 +85,9 @@ Fuzz targets: `FuzzReader` (pkt-line), `FuzzParseRequest`, `FuzzParseFetch`,
 corpus under `testdata/fuzz`; CI runs each target for 20 s.
 
 Real `git` is the oracle: `ls-refs` output is compared byte for byte with
-`git upload-pack --stateless-rpc` on six repository shapes (normal, empty,
-detached HEAD, HEAD at a tag, symbolic ref); packs are checked with
+`git upload-pack --stateless-rpc` on seven repository shapes (normal, empty,
+detached HEAD, HEAD at a tag, symbolic ref, loose refs overriding packed ones,
+dangling symbolic ref), and `Refs` is compared with `git for-each-ref` on nine; packs are checked with
 `git index-pack --strict --fix-thin` and `git fsck`; `git clone` and
 `git fetch` run through the built binary.
 
@@ -103,6 +105,33 @@ Opened and used (git v2.47.0, `Documentation/`):
   versus empty pkt-line;
 - `gitprotocol-pack` — side-band(-64k) framing of the packfile (lines 472–490);
 - `gitprotocol-capabilities` — `side-band-64k` (lines 135–168).
+
+Opened and used for reading refs without a process (`refs_files.go`):
+
+- `gitrepository-layout(5)` (git 2.54.0 man page on the build machine) —
+  `refs/`, `packed-refs` ("the same information ... in a more efficient way"),
+  `HEAD` as a symref or a detached object id;
+- `refs/packed-backend.c` (git/git, master, read 2026-11-25) — the
+  "# pack-refs with:" header and its traits, `fully-peeled` meaning a ref
+  with no `^` line is not peelable (`create_snapshot`, lines 697-761), the
+  record and peel-line grammar (the record iterator, lines 935-1001);
+- a reftable repository, observed with `git init --ref-format=reftable` in
+  git 2.54.0: config `extensions.refstorage = reftable`, a stub
+  `HEAD` (`ref: refs/heads/.invalid`), a `refs/heads` file, a `reftable/`
+  directory. The git 2.54 `git-config(1)` man page on the build machine does
+  not document `extensions.refStorage`, so that key is cited from the
+  observation, not from a document I read.
+
+Behaviour: only a repository whose config has no `extensions.refStorage`, or
+exactly `files`, with no `commondir` and no `reftable/`, is read in Go. A
+reftable or unknown backend, a linked worktree, a detached HEAD, a dangling or
+cyclic symbolic ref, a packed-refs without `fully-peeled`, a malformed or
+oddly named ref: all go to `git for-each-ref`, never guessed at. Loose refs
+outside `refs/heads/` are peeled with one `cat-file --batch-check` (a loose
+file does not say whether it names a tag); git refuses to write a non-commit
+under `refs/heads/`, so those are taken as commits. Bounds, refused with an
+error: packed-refs 256 MiB, 8 KiB per line or loose file, a million refs, 64
+directory levels under `refs/`. `FuzzParsePackedRefs` covers the parser.
 
 `gitprotocol-v2` also describes `shallow`, `filter`, `ref-in-want`,
 `sideband-all`, `packfile-uris`, `wait-for-done`, `object-info`, `bundle-uri`
