@@ -1,0 +1,2 @@
+go test fuzz v1
+string("want aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndeepen 1\nfilter blob:none")

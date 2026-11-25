@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  CGO_ENABLED: "0"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - run: git --version
+      - run: go vet ./...
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+      - run: go test -count=1 ./...
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
+      - run: go test -race -count=1 ./...
+
+  # Bomb tests assert a refusal under a hard memory limit.
+  bomb:
+    name: bomb tests under GOMEMLIMIT
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
+      - run: GOMEMLIMIT=64MiB go test -count=1 -run 'Bomb' ./...
+
+  # Each fuzz target for 20 s; the committed corpus under testdata/fuzz is
+  # always replayed by the test job.
+  fuzz:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
+      - run: go test -run '^$' -fuzz '^FuzzReader$' -fuzztime 20s ./pktline
+      - run: go test -run '^$' -fuzz '^FuzzParseRequest$' -fuzztime 20s .
+      - run: go test -run '^$' -fuzz '^FuzzParseFetch$' -fuzztime 20s .
+      - run: go test -run '^$' -fuzz '^FuzzParseLsRefs$' -fuzztime 20s .
+      - run: go test -run '^$' -fuzz '^FuzzServe$' -fuzztime 20s .
+
+  # The toolchain is the one go.mod names, so a floor too low to carry the
+  # standard library's fixes is a finding here: govulncheck exits 3 on any.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, check-latest: true, cache: true }
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

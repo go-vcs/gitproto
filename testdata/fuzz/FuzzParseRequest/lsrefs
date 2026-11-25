@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("0014command=ls-refs\n00010009peel\n0000")
