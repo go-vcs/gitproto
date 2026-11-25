@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("# pack-refs with: peeled fully-peeled sorted \naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/heads/main\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/tags/v1\n^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
