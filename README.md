@@ -1,5 +1,12 @@
 # gitproto
 
+<img src="https://raw.githubusercontent.com/go-vcs/brand/main/avatar/go-vcs-gitproto.png" width="96" alt="go-vcs gitproto" align="right">
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-vcs/gitproto.svg)](https://pkg.go.dev/github.com/go-vcs/gitproto)
+[![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
+[![CI](https://github.com/go-vcs/gitproto/actions/workflows/ci.yml/badge.svg)](https://github.com/go-vcs/gitproto/actions/workflows/ci.yml)
+[![Landing](https://img.shields.io/badge/landing-go--vcs.github.io-0079A8.svg)](https://go-vcs.github.io) [![Docs](https://img.shields.io/badge/docs-go--vcs.github.io%2Fdocs-0079A8.svg)](https://go-vcs.github.io/docs/main/)
+
 Git wire protocol v2 (fetch side) as a Go library, with no knowledge of any
 forge: it takes an `io.Reader`, an `io.Writer` and a `Repository`, so a forge
 can mount it on SSH and on smart HTTP. Part of [go-vcs](https://github.com/go-vcs),
