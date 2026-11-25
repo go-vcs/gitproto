@@ -144,16 +144,33 @@ func (g *GitRepo) Refs(ctx context.Context) ([]Ref, error) {
 		refs = append(refs, r)
 	}
 	// for-each-ref's %(*objectname) peels one level; peel fully.
+	// One process for all of them: a process per tag costs more than the pack.
+	var peel []int
+	var in strings.Builder
 	for i := range refs {
-		if refs[i].Peeled == "" {
-			continue
+		if refs[i].Peeled != "" {
+			peel = append(peel, i)
+			in.WriteString(refs[i].ID + "^{}\n")
 		}
-		full, ok, err := g.revParse(ctx, refs[i].ID+"^{}")
+	}
+	if len(peel) > 0 {
+		out, err := g.run(ctx, in.String(), "cat-file", "--batch-check=%(objectname)")
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			refs[i].Peeled = full
+		lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+		if len(lines) != len(peel) {
+			return nil, fmt.Errorf("gitproto: cat-file answered %d lines for %d refs", len(lines), len(peel))
+		}
+		for k, i := range peel {
+			switch {
+			case ValidOID(lines[k]):
+				refs[i].Peeled = lines[k]
+			case strings.HasSuffix(lines[k], " missing"):
+				// no longer resolves: keep for-each-ref's one-level answer
+			default:
+				return nil, fmt.Errorf("gitproto: unexpected cat-file line %q", lines[k])
+			}
 		}
 	}
 

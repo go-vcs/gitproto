@@ -77,11 +77,11 @@ func refLine(id, name, peeled, symref string) string {
 func TestGitRepoRefsParsesGitOutput(t *testing.T) {
 	idC := strings.Repeat("c", 40)
 	r := fakeGit(t, map[string]reply{
-		"for-each-ref":      {refLine(idA, "refs/heads/main", "", "") + refLine(idA, "refs/tags/t", idB, ""), 0},
-		revKey(idA + "^{}"): {idC + "\n", 0},
-		"symbolic-ref":      {"refs/heads/main\n", 0},
-		revKey("HEAD"):      {idA + "\n", 0},
-		revKey("HEAD^{}"):   {idB + "\n", 0},
+		"for-each-ref":    {refLine(idA, "refs/heads/main", "", "") + refLine(idA, "refs/tags/t", idB, ""), 0},
+		"cat-file":        {idC + "\n", 0},
+		"symbolic-ref":    {"refs/heads/main\n", 0},
+		revKey("HEAD"):    {idA + "\n", 0},
+		revKey("HEAD^{}"): {idB + "\n", 0},
 	})
 	got, err := r.Refs(context.Background())
 	if err != nil {
@@ -104,10 +104,10 @@ func TestGitRepoRefsParsesGitOutput(t *testing.T) {
 	// A peeled name that no longer resolves keeps for-each-ref's one-level
 	// answer; a detached HEAD has no target; an unresolvable HEAD is absent.
 	r = fakeGit(t, map[string]reply{
-		"for-each-ref":      {refLine(idA, "refs/tags/t", idB, ""), 0},
-		revKey(idA + "^{}"): {"", 1},
-		"symbolic-ref":      {"", 1},
-		revKey("HEAD"):      {"", 1},
+		"for-each-ref": {refLine(idA, "refs/tags/t", idB, ""), 0},
+		"cat-file":     {idA + "^{} missing\n", 0},
+		"symbolic-ref": {"", 1},
+		revKey("HEAD"): {"", 1},
 	})
 	got, err = r.Refs(context.Background())
 	if err != nil || len(got) != 1 || got[0].Peeled != idB {
@@ -135,7 +135,19 @@ func TestGitRepoRefsRefusesWhatGitGetsWrong(t *testing.T) {
 		"invalid object name": func(m map[string]reply) { m["for-each-ref"] = reply{refLine("zz", "refs/x", "", ""), 0} },
 		"peel fails": func(m map[string]reply) {
 			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
-			m[revKey(idA+"^{}")] = reply{"", 128}
+			m["cat-file"] = reply{"", 128}
+		},
+		"peel answers too few lines": func(m map[string]reply) {
+			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
+			m["cat-file"] = reply{"", 0}
+		},
+		"peel answers too many lines": func(m map[string]reply) {
+			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
+			m["cat-file"] = reply{idB + "\n" + idB + "\n", 0}
+		},
+		"peel answers garbage": func(m map[string]reply) {
+			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
+			m["cat-file"] = reply{"garbage\n", 0}
 		},
 		"symbolic-ref fails":   func(m map[string]reply) { m["symbolic-ref"] = reply{"", 128} },
 		"rev-parse HEAD fails": func(m map[string]reply) { m[revKey("HEAD")] = reply{"", 128} },
