@@ -135,7 +135,7 @@ func TestGitRepoRefsRefusesWhatGitGetsWrong(t *testing.T) {
 		"invalid object name": func(m map[string]reply) { m["for-each-ref"] = reply{refLine("zz", "refs/x", "", ""), 0} },
 		"peel fails": func(m map[string]reply) {
 			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
-			m["cat-file"] = reply{"", 128}
+			m["cat-file"] = reply{idB + "\n", 128} // plausible output, failed exit
 		},
 		"peel answers too few lines": func(m map[string]reply) {
 			m["for-each-ref"] = reply{refLine(idA, "refs/t", idB, ""), 0}
