@@ -154,7 +154,8 @@ func Text(p []byte) []byte {
 // Writer encodes pkt-lines.
 type Writer struct {
 	w   io.Writer
-	err error // sticky: the first write error
+	err error  // sticky: the first write error
+	buf []byte // reused packet frame
 }
 
 // Err returns the first write error, if any. Once set, every later write
@@ -174,19 +175,16 @@ func NewWriter(w io.Writer) *Writer { return &Writer{w: w} }
 
 const hexdigits = "0123456789abcdef"
 
-func header(n int) []byte {
-	return []byte{hexdigits[n>>12&15], hexdigits[n>>8&15], hexdigits[n>>4&15], hexdigits[n&15]}
-}
-
 // Data writes one data pkt-line. A payload over MaxData is refused.
 func (w *Writer) Data(p []byte) error {
 	if len(p) > MaxData {
 		return fmt.Errorf("%w: %d", ErrDataTooBig, len(p))
 	}
 	// One Write call per packet so that unbuffered transports see whole packets.
-	b := make([]byte, 0, 4+len(p))
-	b = append(b, header(len(p)+4)...)
+	n := len(p) + 4
+	b := append(w.buf[:0], hexdigits[n>>12&15], hexdigits[n>>8&15], hexdigits[n>>4&15], hexdigits[n&15])
 	b = append(b, p...)
+	w.buf = b
 	return w.put(b)
 }
 
@@ -203,10 +201,11 @@ func (w *Writer) Sideband(ch byte, p []byte) error {
 	}
 	for len(p) > 0 {
 		n := min(len(p), MaxSidebandData)
-		b := make([]byte, 0, 5+n)
-		b = append(b, header(n+5)...)
-		b = append(b, ch)
+		// One reused frame buffer: io.Writer forbids retaining p, so the
+		// next packet may overwrite it.
+		b := append(w.buf[:0], hexdigits[(n+5)>>12&15], hexdigits[(n+5)>>8&15], hexdigits[(n+5)>>4&15], hexdigits[(n+5)&15], ch)
 		b = append(b, p[:n]...)
+		w.buf = b
 		if err := w.put(b); err != nil {
 			return err
 		}

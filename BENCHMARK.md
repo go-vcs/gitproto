@@ -89,3 +89,30 @@ Pack bytes per clone: gitproto 8 419 937, git 8 427 675.
 
 gitproto is now 2.3-3.5 % faster than `git upload-pack` on this repository.
 The remaining allocations, about 2036 per request, are the next target.
+
+## Allocations (2026-11-26, commit f215cbc then this change)
+
+`go test -memprofile -memprofilerate 1` on `BenchmarkFetchClone` (20x) at
+f215cbc, `alloc_objects`: `parsePackedRefs` 38 % flat, `strings.genSplit` (the
+`strings.Split` in `validRefName`, one per ref) 20 %, `pktline.Writer.Sideband`
+11 % of the objects and 93 % of the bytes (a fresh frame for each of about 270
+packets, 8.4 MB per request), the rest `os` calls of the loose-ref walk.
+
+Fixes: `Writer` reuses one frame buffer (`io.Writer` forbids retaining the
+slice); `parsePackedRefs` converts the file to one string once, sizes its map
+and keeps the records in one slice; `validRefName` walks the components with
+`strings.Cut`. Tests: `TestWriterAllocs` (0 allocs per packet),
+`TestRefParsingAllocs` (bounded independently of the ref count).
+
+| Version | allocs/op | B/op        | gitproto ms/op | git ms/op | ratio |
+|---------|----------:|------------:|---------------:|----------:|------:|
+| f215cbc, 1-min load 6.51 / 5-min 5.65 | 2203 | 10 094 524 | 149.61 | 146.67 | 1.020 |
+| this change, 1-min load 7.72 / 5-min 6.40 | 620 | 603 498 | 140.73 | 143.47 | 0.981 |
+
+Both runs: 20 iterations, one run each, profile on (`-memprofilerate 1`
+inflates times and the allocation counts include the profiler-visible
+objects). The allocation counts are exact; the times are not an
+interleaved comparison and are given only for context. 1-min load of the
+second run was 7.72 and the times are not a result. The remaining 620 allocs
+are `os` calls of the loose-ref walk (file open/stat/readdir) and the child
+process.
