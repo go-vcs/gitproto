@@ -73,8 +73,19 @@ and validating wants used that full peel. `git upload-pack` itself costs about
 Fix: want validation asks `RefsUnpeeled` first, and only a want that matches
 no ref object falls back to the peeled `Refs`. The accepted set is unchanged.
 
-The after-fix ns/op table is not yet taken: `gotest` refused to measure
-(5-minute load average 9.2 to 12.4, above the limit of 8) on three attempts
-between 20:32 and 20:48. The expected `ServeRequest` is `WritePack` plus the
-unpeeled `Refs`, about 141 ms against upload-pack's 146 ms; this is a
-prediction from the table above, not a measurement.
+## After the fix (2026-11-26 08:44 CET, commit e789b10, PR #4 head)
+
+Apple M4 Max, darwin/arm64, load 1-min 5.46 / 5-min 5.41 (under the limit of
+8). Command: `GITPROTO_BENCH_REPO=<go-fleettools/fleettools clone> gotest -run
+'^$' -bench FetchClone -benchmem -benchtime 20x -count 3 .`
+
+| Run | gitproto ms/op | git ms/op | ratio  | gitproto allocs/op |
+|-----|---------------:|----------:|-------:|-------------------:|
+| 1   |         144.62 |    148.11 | 0.9765 | 2037               |
+| 2   |         144.11 |    149.37 | 0.9647 | 2036               |
+| 3   |         143.05 |    147.71 | 0.9685 | 2036               |
+
+Pack bytes per clone: gitproto 8 419 937, git 8 427 675.
+
+gitproto is now 2.3-3.5 % faster than `git upload-pack` on this repository.
+The remaining allocations, about 2036 per request, are the next target.
