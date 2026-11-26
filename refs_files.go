@@ -289,7 +289,10 @@ func validRefName(n string) bool {
 		strings.Contains(n, "..") || strings.Contains(n, "@{") || strings.Contains(n, "//") {
 		return false
 	}
-	for _, c := range strings.Split(n, "/") {
+	// Each "/"-separated component; walked in place, no Split allocation.
+	for rest, more := n, true; more; {
+		var c string
+		c, rest, more = strings.Cut(rest, "/")
 		if c == "" || c[0] == '.' || strings.HasSuffix(c, ".lock") {
 			return false
 		}
@@ -371,33 +374,44 @@ func readPacked(path string) (map[string]*rawRef, error) {
 // parsePackedRefs parses the contents of a packed-refs file. A file git would
 // call malformed, unsorted-by-claim or not fully peeled is errUnsupported.
 func parsePackedRefs(b []byte) (map[string]*rawRef, error) {
-	out := map[string]*rawRef{}
+	// One string for the whole file: every id and name below is a substring
+	// of it, instead of one allocation per line. The refs keep it alive, and
+	// the file is bounded (maxPackedRefsBytes).
+	s := string(b)
+	// A ref line is about 60 bytes; sizing the map and the records up front
+	// avoids growth and one allocation per ref.
+	est := min(strings.Count(s, "\n"), maxRefCount)
+	out := make(map[string]*rawRef, est)
+	recs := make([]rawRef, 0, est)
 	fully := false
-	if len(b) > 0 && b[0] == '#' {
-		hdr, rest, found := bytes.Cut(b, []byte("\n"))
+	if len(s) > 0 && s[0] == '#' {
+		hdr, rest, found := strings.Cut(s, "\n")
 		if !found || len(hdr) > maxRefLineBytes {
 			return nil, errUnsupported
 		}
-		traits, ok := strings.CutPrefix(string(hdr), "# pack-refs with: ")
+		traits, ok := strings.CutPrefix(hdr, "# pack-refs with: ")
 		if !ok {
 			return nil, errUnsupported
 		}
-		fully = slices.Contains(strings.Split(traits, " "), "fully-peeled")
-		b = rest
+		for t := range strings.SplitSeq(traits, " ") {
+			if t == "fully-peeled" {
+				fully = true
+			}
+		}
+		s = rest
 	}
 	// last starts as a record that already has a peel line, so a "^" line
 	// before any ref is refused by the same test as a second one.
 	last := &rawRef{peeled: "-"}
-	for len(b) > 0 {
-		lineB, rest, found := bytes.Cut(b, []byte("\n"))
+	for len(s) > 0 {
+		line, rest, found := strings.Cut(s, "\n")
 		if !found {
 			return nil, errUnsupported // an unterminated last line
 		}
-		if len(lineB) > maxRefLineBytes {
+		if len(line) > maxRefLineBytes {
 			return nil, &errRefBound{"a packed-refs line longer than the bound"}
 		}
-		line := string(lineB)
-		b = rest
+		s = rest
 		if rest, ok := strings.CutPrefix(line, "^"); ok {
 			if last.peeled != "" || !ValidOID(rest) {
 				return nil, errUnsupported
@@ -415,7 +429,8 @@ func parsePackedRefs(b []byte) (map[string]*rawRef, error) {
 		if len(out) >= maxRefCount {
 			return nil, &errRefBound{"more than a million refs"}
 		}
-		last = &rawRef{id: id}
+		recs = append(recs, rawRef{id: id}) // cap est >= refs: never reallocates
+		last = &recs[len(recs)-1]
 		out[name] = last
 	}
 	if !fully && len(out) > 0 {
