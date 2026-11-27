@@ -116,3 +116,26 @@ interleaved comparison and are given only for context. 1-min load of the
 second run was 7.72 and the times are not a result. The remaining 620 allocs
 are `os` calls of the loose-ref walk (file open/stat/readdir) and the child
 process.
+
+## Repacked reference repository (2026-11-27, commit 4952844)
+
+Taken 09:39-09:41 CET by the coordinator, Apple M4 Max, load 1-min 5.4-6.6 /
+5-min 4.1-4.5 (under the limit of 8). Command: `GITPROTO_BENCH_REPO=<clone>
+gotest -run '^$' -bench FetchClone -benchmem -benchtime 20x -count 6 .`
+
+Input: `go-fleettools/fleettools`, which had been repacked since 2026-11-26: 5312
+objects in 2 packs, 16.9 MB, 0 loose objects. It is not the repository of the
+earlier tables in this file, whose numbers therefore do not compare with these.
+
+| Run | gitproto ms/op | git upload-pack ms/op | ratio |
+|-----|---------------:|----------------------:|------:|
+| 1   |          85.00 |                 88.70 | 0.958 |
+| 2   |          84.52 |                 88.70 | 0.953 |
+| 3   |          86.77 |                 91.40 | 0.949 |
+| 4   |          89.43 |                 93.89 | 0.953 |
+| 5   |          88.74 |                 93.27 | 0.951 |
+| 6   |          89.31 |                 96.31 | 0.927 |
+
+gitproto 272-285 allocs/op and about 631 KB/op. Pack bytes per clone: gitproto
+8 418 351, git 8 425 958. gitproto is 4-7 % faster than `git upload-pack` in
+every run (the benchmark interleaves the two).
