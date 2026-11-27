@@ -12,8 +12,10 @@ forge: it takes an `io.Reader`, an `io.Writer` and a `Repository`, so a forge
 can mount it on SSH and on smart HTTP. Part of [go-vcs](https://github.com/go-vcs),
 a light, secure Git forge.
 
-Status: **milestone 1** — serving `ls-refs` and `fetch` from an on-disk
-repository. No push, no shallow, no filters.
+Status: **milestone 1**, released as v0.1.0 — serving `ls-refs` and `fetch`
+from an on-disk repository. No push, no shallow, no filters. A full clone takes
+0.93 to 0.96 of the time of `git upload-pack` (six interleaved runs on one
+reference repository, see [BENCHMARK.md](BENCHMARK.md)).
 
 ## Use
 
